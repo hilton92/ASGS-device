@@ -2,21 +2,18 @@
 /* Author: Benjamin Hilton
    Date: June 2018
    Developed for the BYU Voice Lab
-   Copyright 2018, BYU Voice Lab, All rights reserved
+   Copyright 2018
 */
-
 
 #include <Wire.h> // For IC2 communication
 #include <hd44780.h> // For LCD screen                       
-#include <hd44780ioClass/hd44780_I2Cexp.h> 
+#include <hd44780ioClass/hd44780_I2Cexp.h> // For LCD screen
 
 hd44780_I2Cexp lcd(0x27); //create LCD object, with I2C address
 
+// variables for inputs
 int val = 0;
 int in_byte = 0;
-
-String string;
-char value;
 
 int current_constriction = 19; // ranges from 19 to 100
 int desired_constriction = 19; // ranges from 19 to 100
@@ -43,15 +40,14 @@ int LimitB_signal = 27;
 int LimitC_signal = 25;
 int LimitD_signal = 23;
 
-// the pin for the switch that is used to select the mode
+// define pin for the switch that is used to select the mode
 int ModeSwitchPin = 22;
 
-// the pins for the push buttons
+// define the pins for the push buttons
 int UpButton = 26;
 int DownButton = 24;
 
-
-// class definition
+// class definition for stepper motor
 class StepperMotor {
     int PULpin;
     int DIRpin;
@@ -66,9 +62,8 @@ class StepperMotor {
       ENApin = ena;
       Steps_from_zero_to_starting = steps;
       LimitSwitchPin = limit_switch;
-      CurrentPosition = 5000; //something sufficiently large so that the position never becomes negative
+      CurrentPosition = 0;
     }
-
 
     void ZeroStepper() {
       //turn the stepper motor back one by 1 until the limit switch is reached.
@@ -77,10 +72,8 @@ class StepperMotor {
         TakeSteps(-1);
         counter = counter + 1;
       }
-      Serial.print("Number of Steps: ");
-      Serial.print(counter);
-      //set the CurrentPosition to zero
       
+      //set the CurrentPosition to zero
       CurrentPosition = 0;
 
       //automatically move forward to zero percent stenosis
@@ -88,12 +81,10 @@ class StepperMotor {
       CurrentPosition = CurrentPosition + Steps_from_zero_to_starting;
     }
 
-
     void TakeSteps(int steps) {
       //when this function is called, the code will move the stepper motor the selected number of steps. PWM happens here.
-      //reverse the sign so that positive steps are positive direction
       CurrentPosition = CurrentPosition + steps;
-      steps = -steps;
+      steps = -steps; // reverse the sign so that positive steps are positive direction
       if (steps > 0) {
         //move in the positive direction
         for (int i = 0; i < steps; i++) {
@@ -119,35 +110,17 @@ class StepperMotor {
         }
       }
     }
-
-
-    void Update() {
-      //this function tells the stepper to move from current constriction to desired constriction
-      int steps = calculateSteps();
-      //move the amount of steps
-      TakeSteps(steps);
-      
-    }
-
-
-    int calculateSteps() {
-      // given the current and desired constriction, do math to get the number of steps
-      // There will be a mathematical function, determined by testing. Something along the lines of:
-      int steps = (desired_constriction - current_constriction) * 46;;
-      return steps;
-    }
 };
 
 
 //initialize all stepper motors with pin values
-  StepperMotor StepperA(StepperA_PUL, StepperA_DIR, StepperA_ENA, 488, LimitA_signal);
-  StepperMotor StepperB(StepperB_PUL, StepperB_DIR, StepperB_ENA, 336, LimitB_signal);
-  StepperMotor StepperC(StepperC_PUL, StepperC_DIR, StepperC_ENA, 512, LimitC_signal);
-  StepperMotor StepperD(StepperD_PUL, StepperD_DIR, StepperD_ENA, 527, LimitD_signal);
+StepperMotor StepperA(StepperA_PUL, StepperA_DIR, StepperA_ENA, 488, LimitA_signal);
+StepperMotor StepperB(StepperB_PUL, StepperB_DIR, StepperB_ENA, 336, LimitB_signal);
+StepperMotor StepperC(StepperC_PUL, StepperC_DIR, StepperC_ENA, 512, LimitC_signal);
+StepperMotor StepperD(StepperD_PUL, StepperD_DIR, StepperD_ENA, 527, LimitD_signal);
 
 
 void setup() {
-
   pinMode(StepperA_PUL, OUTPUT);
   pinMode(StepperA_DIR, OUTPUT);
   pinMode(StepperA_ENA, OUTPUT);
@@ -163,9 +136,9 @@ void setup() {
   pinMode(UpButton, INPUT);
   pinMode(DownButton, INPUT);
 
+  // Enable serial communication
   Serial.begin(9600);
  
-  
   // zero stepper motors
   StepperA.ZeroStepper();
   StepperB.ZeroStepper();
@@ -181,7 +154,6 @@ void setup() {
   // check which mode to boot up in
   BootMode = checkMode();
   if (BootMode == 0) { // solo mode
-    //do not activate serial communication
     lcd.clear();
     lcd.print("The device has been ");
     lcd.setCursor(0,1);
@@ -193,7 +165,6 @@ void setup() {
     delay(1000);
   }
   else if (BootMode == 1) { //  serial mode
-    //activate serial communication
     lcd.clear();
     lcd.print("The device has been ");
     lcd.setCursor(0,1);
@@ -204,7 +175,6 @@ void setup() {
     lcd.print("device to change.");
     delay(1000);
   }
-
   lcd.clear();
   lcd.print("Desired       Actual");
   lcd.setCursor(0, 1);
@@ -212,9 +182,15 @@ void setup() {
 }
 
 void loop() {
-
-  if (BootMode == 0){//this is for solo mode
-   
+/* The structure in the loop is due to the fact that the arduino only has one processor, but needs to appear to do 
+ *  several different tasks simultaneously (check buttons, move stepper motor, update LCD screen). The three "changed"
+ *  variables mean that if the up or down buttons are pressed for three sampling periods, then the loop repeats without 
+ *  moving stepper motors. This allows the user to hold down the buttons and quickly move the desired constriction.
+ *  Once the button is released, then the stepper motors will move to the desired constriction. This also allows the 
+ *  user to push the up or down button and move the stepper motors in increments of one. The delays have been determined
+ *  experimentally to make button use intuitive.
+ */
+  if (BootMode == 0){ //this is for solo mode
     int changed1 = 0;
     int changed2 = 0;
     int changed3 = 0;
@@ -252,9 +228,8 @@ void loop() {
     }
   } 
 
-  else{//this is for labview mode
-    //read the value from labview if available
-
+  else{ // if the device is in labview mode
+    // read the value from labview if available
     if (Serial.available() > 0){
       in_byte = Serial.read();
       if (in_byte > 18 && in_byte < 101){
@@ -262,20 +237,19 @@ void loop() {
       }
       Serial.println(current_constriction);
     }
-    
     if (desired_constriction > current_constriction){
         MoveSteppersPositive();
     }
     if (desired_constriction < current_constriction){
         MoveSteppersNegative();
     }
-    
     printUpdate();  
   }
 }
 
 void MoveSteppersPositive(){
   double buffer = 0;
+  // These values mimic a function to adjust for the nonlinearity of |area vs constriction| determined experimentally
   if(current_constriction >= 20 && current_constriction < 24){
     buffer = -0.18;
   }
@@ -365,6 +339,7 @@ void MoveSteppersPositive(){
 }
 
 void MoveSteppersNegative(){
+  // These values mimic a function to adjust for the nonlinearity of |area vs constriction| determined experimentally
   double buffer = 0;
   if(current_constriction >= 20 && current_constriction < 24){
     buffer = -0.18;
@@ -429,7 +404,6 @@ void MoveSteppersNegative(){
 
   int factor = buffer * -30;
 
-  
   if(current_constriction > 70){
     StepperA.TakeSteps(-10 - factor);
     StepperB.TakeSteps(-10 - factor);
@@ -454,13 +428,11 @@ void MoveSteppersNegative(){
   }
 }
 
-
 void printUpdate() {
-  
   String currentString = String(current_constriction);
   String desiredString = String(desired_constriction);
   lcd.setCursor(0, 3);
-  //format the output, cuz this ain't python and there's no function that does this...
+  // format the string output
   String output1 = "";
   String output2 = "";
   String output3 = "";
@@ -481,7 +453,6 @@ void printUpdate() {
 
 }
 
-
 int getDesiredConstriction() {
   int currentDesired = desired_constriction;
   int changed = 0;
@@ -498,8 +469,6 @@ int getDesiredConstriction() {
   return changed;
 }
 
-
-
 int checkMode() {
   lcd.clear();
   lcd.print("Selecting mode...");
@@ -512,7 +481,4 @@ int checkMode() {
     return 1; //1 for serial mode
   }
 }
-
-
-
 
